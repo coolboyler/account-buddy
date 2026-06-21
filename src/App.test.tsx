@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
+import { setApiAuthToken } from './lib/api';
 import type { Expense, User } from './types';
 
 function jsonResponse(body: unknown, status = 200) {
@@ -15,8 +16,10 @@ describe('App', () => {
   let users: User[];
   let expenses: Expense[];
   let fetchSpy: ReturnType<typeof vi.fn>;
+  let currentDate: string;
 
   beforeEach(() => {
+    currentDate = new Date().toISOString().slice(0, 10);
     users = [
       { id: '1', name: '室友 A' },
       { id: '2', name: '室友 B' },
@@ -27,17 +30,35 @@ describe('App', () => {
         description: '买菜',
         amount: 45,
         paidBy: '1',
-        date: '2026-03-21',
+        date: currentDate,
         category: '餐饮',
         settledAt: null,
       },
     ];
+    localStorage.clear();
+    setApiAuthToken(null);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method ?? 'GET').toUpperCase();
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+
+      if (url.endsWith('/api/login') && method === 'POST') {
+        if (body?.username === 'house' && body?.password === '260321') {
+          return jsonResponse({ token: 'test-token', user: { id: 'admin', username: 'house' } });
+        }
+
+        return jsonResponse({ message: '用户名或密码错误' }, 401);
+      }
+
+      const headers = init?.headers as Record<string, string> | undefined;
+      const hasAuthHeader = Boolean(headers && Object.entries(headers).some(([key, value]) => (
+        key.toLowerCase() === 'authorization' && value === 'Bearer test-token'
+      )));
+      if (!hasAuthHeader) {
+        return jsonResponse({ message: '登录已过期，请重新登录' }, 401);
+      }
 
       if (url.endsWith('/api/bootstrap') && method === 'GET') {
         return jsonResponse({ users, expenses });
@@ -107,13 +128,22 @@ describe('App', () => {
 
   afterEach(() => {
     cleanup();
+    localStorage.clear();
+    setApiAuthToken(null);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
+  async function login(user: ReturnType<typeof userEvent.setup>) {
+    render(<App />);
+    await user.type(screen.getByLabelText('用户名'), 'house');
+    await user.type(screen.getByLabelText('密码'), '260321');
+    await user.click(screen.getByRole('button', { name: '登录' }));
+  }
+
   it('loads data and completes the main ledger workflow', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await login(user);
 
     await screen.findByText('买菜');
     expect(fetchSpy).toHaveBeenCalledWith('/api/bootstrap', expect.any(Object));
@@ -125,16 +155,16 @@ describe('App', () => {
     await user.type(screen.getByLabelText('支出描述'), '电费');
     await user.type(screen.getByLabelText('金额 (¥)'), '88');
     await user.selectOptions(screen.getByLabelText('分类'), '居住');
-    await screen.findByText('当前金额按两人平摊后，每人承担');
-    await user.click(screen.getByRole('button', { name: '确认添加' }));
+    await screen.findByText(/平摊后每人/);
+    await user.click(screen.getByRole('button', { name: '添加' }));
     await screen.findByText('电费');
 
-    await user.click(screen.getByLabelText('编辑支出 电费'));
+    await user.click(screen.getByLabelText('编辑 电费'));
     expect(screen.getByText('编辑支出')).not.toBeNull();
     const descriptionInput = screen.getByLabelText('支出描述');
     await user.clear(descriptionInput);
     await user.type(descriptionInput, '电费已修改');
-    await user.click(screen.getByRole('button', { name: '保存修改' }));
+    await user.click(screen.getByRole('button', { name: '保存' }));
     await waitFor(() => {
       const updateCall = fetchSpy.mock.calls.find(
         ([url, init]) => url === '/api/expenses/expense-2' && init?.method === 'PUT',
@@ -146,7 +176,7 @@ describe('App', () => {
         description: '电费已修改',
         amount: 88,
         paidBy: '1',
-        date: '2026-03-21',
+        date: currentDate,
         category: '居住',
       });
     });
@@ -159,13 +189,13 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: '保存更改' }));
     await screen.findByText('室友名称已更新');
 
-    await user.click(screen.getByLabelText('删除支出 买菜'));
+    await user.click(screen.getByLabelText('删除 买菜'));
     await waitFor(() => {
       expect(screen.queryByText('买菜')).toBeNull();
     });
 
     await user.click(screen.getByLabelText('选择支出 电费已修改'));
-    await user.click(screen.getByRole('button', { name: '结算选中 (1)' }));
+    await user.click(screen.getByRole('button', { name: '结算(1)' }));
     await user.click(screen.getByRole('button', { name: '确认' }));
     await screen.findByText('已结算');
     await screen.findByText('账单历史');
@@ -185,7 +215,7 @@ describe('App', () => {
 
   it('prevents accidental duplicate additions unless explicitly confirmed', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    await login(user);
 
     await screen.findByText('买菜');
 
@@ -194,14 +224,14 @@ describe('App', () => {
     await user.type(screen.getByLabelText('支出描述'), '买菜');
     await user.clear(screen.getByLabelText('金额 (¥)'));
     await user.type(screen.getByLabelText('金额 (¥)'), '45');
-    await user.selectOptions(screen.getByLabelText('付款人'), '室友 A');
+    await user.selectOptions(screen.getByLabelText('付款人'), '1');
     await user.selectOptions(screen.getByLabelText('分类'), '餐饮');
 
-    expect(screen.getByText('检测到疑似重复账单')).not.toBeNull();
-    const submitButton = screen.getByRole('button', { name: '确认添加' });
+    expect(screen.getByText('疑似重复账单')).not.toBeNull();
+    const submitButton = screen.getByRole('button', { name: '添加' });
     expect((submitButton as HTMLButtonElement).disabled).toBe(true);
 
-    await user.click(screen.getByLabelText(/我已确认，这不是误添加/));
+    await user.click(screen.getByLabelText(/确认不是误添加/));
     expect((submitButton as HTMLButtonElement).disabled).toBe(false);
     await user.click(submitButton);
 

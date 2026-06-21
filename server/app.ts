@@ -201,6 +201,7 @@ function parseExpenseDraft(payload: unknown): ExpenseDraft {
 
 export function createApp(store: LedgerStore) {
   const app = express();
+  const sessions = new Set<string>();
 
   // 安全中间件：添加安全响应头
   app.use((_request, response, next) => {
@@ -230,6 +231,22 @@ export function createApp(store: LedgerStore) {
   });
 
   app.use(express.json({ limit: '10kb' })); // 限制请求体大小
+
+  app.use('/api', (request, response, next) => {
+    if (request.path === '/health' || request.path === '/login') {
+      next();
+      return;
+    }
+
+    const authorization = request.headers.authorization ?? '';
+    const [scheme, token] = authorization.split(' ');
+    if (scheme !== 'Bearer' || !token || !sessions.has(token)) {
+      response.status(401).json({ message: '登录已过期，请重新登录' });
+      return;
+    }
+
+    next();
+  });
 
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'ok' });
@@ -371,6 +388,7 @@ export function createApp(store: LedgerStore) {
 
       // 生成简单的 session token（生产环境应该使用 JWT）
       const token = crypto.randomBytes(32).toString('hex');
+      sessions.add(token);
       
       response.json({
         token,

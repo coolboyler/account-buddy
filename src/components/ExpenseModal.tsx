@@ -9,7 +9,7 @@ interface Props {
   users: User[];
   initialData?: Expense | null;
   existingExpenses: Expense[];
-  onSaveExpense: (expense: ExpenseDraft | Expense) => Promise<void>;
+  onSaveExpense: (expense: ExpenseDraft | Expense) => Promise<boolean>;
   isSaving: boolean;
 }
 
@@ -17,8 +17,11 @@ export function ExpenseModal({ isOpen, onClose, users, initialData, existingExpe
   if (!isOpen) return null;
 
   const handleSave = async (expenseData: ExpenseDraft | Expense) => {
-    await onSaveExpense(expenseData);
-    onClose();
+    const saved = await onSaveExpense(expenseData);
+    if (saved) {
+      onClose();
+    }
+    return saved;
   };
 
   return (

@@ -11,7 +11,7 @@ import { MonthSelector } from './components/MonthSelector';
 import { ExpenseModal } from './components/ExpenseModal';
 import { HistoryList } from './components/HistoryList';
 import { LoginPage } from './components/LoginPage';
-import { createExpense, deleteExpense, getBootstrap, settleUp, updateExpense, updateUser } from './lib/api';
+import { ApiError, createExpense, deleteExpense, getBootstrap, setApiAuthToken, settleUp, updateExpense, updateUser } from './lib/api';
 import { compareExpenseDates } from './lib/date';
 
 const STORAGE_KEY = 'accountbuddy_token';
@@ -44,6 +44,7 @@ export default function App() {
   useEffect(() => {
     const storedToken = localStorage.getItem(STORAGE_KEY);
     if (storedToken) {
+      setApiAuthToken(storedToken);
       setAuthToken(storedToken);
       setIsAuthenticated(true);
     }
@@ -52,6 +53,7 @@ export default function App() {
   // 登录成功后保存 token
   const handleLoginSuccess = (token: string) => {
     localStorage.setItem(STORAGE_KEY, token);
+    setApiAuthToken(token);
     setAuthToken(token);
     setIsAuthenticated(true);
   };
@@ -59,6 +61,7 @@ export default function App() {
   // 登出
   const handleLogout = () => {
     localStorage.removeItem(STORAGE_KEY);
+    setApiAuthToken(null);
     setAuthToken(null);
     setIsAuthenticated(false);
     setExpenses([]);
@@ -100,6 +103,11 @@ export default function App() {
           return;
         }
 
+        if (error instanceof ApiError && error.status === 401) {
+          handleLogout();
+          return;
+        }
+
         setErrorMessage(error instanceof Error ? error.message : '加载数据失败');
       } finally {
         if (active) {
@@ -118,7 +126,7 @@ export default function App() {
   const handleSaveExpense = async (expenseData: ExpenseDraft | Expense) => {
     // 防止重复提交
     if (isSavingExpense) {
-      return;
+      return false;
     }
 
     try {
@@ -136,9 +144,11 @@ export default function App() {
         });
       });
       setStatusMessage('id' in expenseData ? '账单已更新' : '账单已添加');
+      return true;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : '保存账单失败';
       setErrorMessage(errorMsg);
+      return false;
     } finally {
       setIsSavingExpense(false);
     }
@@ -177,7 +187,7 @@ export default function App() {
   const handleUpdateUser = async (id: string, name: string) => {
     // 防止重复保存
     if (isSavingUsers) {
-      return;
+      return false;
     }
 
     try {
@@ -188,8 +198,10 @@ export default function App() {
         setUsers((previousUsers) => previousUsers.map((user) => (user.id === id ? savedUser : user)));
       });
       setStatusMessage('室友名称已更新');
+      return true;
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '保存用户失败');
+      return false;
     } finally {
       setIsSavingUsers(false);
     }
@@ -247,11 +259,11 @@ export default function App() {
       startTransition(() => {
         setExpenses((previousExpenses) => previousExpenses.map((expense) => {
           // 修复：如果账单在 ids 中且未结算，更新 settledAt
-          if (ids.includes(expense.id) && !expense.settledAt) {
+          if (result.settledAt && ids.includes(expense.id) && !expense.settledAt) {
             return { ...expense, settledAt: result.settledAt };
           }
           return expense;
-        }));
+        }).sort(compareExpenseDates));
       });
       setSelectedExpenseIds((previousIds) => previousIds.filter((id) => !ids.includes(id)));
       setSettlementRequest(null);

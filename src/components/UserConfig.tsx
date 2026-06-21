@@ -4,7 +4,7 @@ import { Settings, User as UserIcon, Check, LoaderCircle } from 'lucide-react';
 
 interface Props {
   users: User[];
-  onUpdateUser: (id: string, name: string) => Promise<void>;
+  onUpdateUser: (id: string, name: string) => Promise<boolean>;
   isSaving: boolean;
 }
 
@@ -27,10 +27,14 @@ export function UserConfig({ users, onUpdateUser, isSaving }: Props) {
 
     try {
       setErrorMessage(null);
-      await Promise.all([
+      const results = await Promise.all([
         onUpdateUser(users[0].id, name1.trim()),
         onUpdateUser(users[1].id, name2.trim()),
       ]);
+      if (!results.every(Boolean)) {
+        setErrorMessage('保存设置失败，请检查后重试');
+        return;
+      }
       setIsOpen(false);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '保存设置失败');

@@ -2,7 +2,9 @@ import type { AppBootstrap, Expense, ExpenseDraft, User } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
-class ApiError extends Error {
+let authToken: string | null = null;
+
+export class ApiError extends Error {
   status: number;
 
   constructor(message: string, status: number) {
@@ -10,6 +12,10 @@ class ApiError extends Error {
     this.name = 'ApiError';
     this.status = status;
   }
+}
+
+export function setApiAuthToken(token: string | null) {
+  authToken = token;
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -38,6 +44,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...(init?.headers ?? {}),
     },
     ...init,

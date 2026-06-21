@@ -8,7 +8,7 @@ interface Props {
   users: User[];
   initialData?: Expense | null;
   existingExpenses: Expense[];
-  onSave: (expenseData: ExpenseDraft | Expense) => Promise<void>;
+  onSave: (expenseData: ExpenseDraft | Expense) => Promise<boolean>;
   onCancel: () => void;
   isSaving: boolean;
 }

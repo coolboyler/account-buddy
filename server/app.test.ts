@@ -47,6 +47,20 @@ async function readJson<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function login(baseUrl: string) {
+  const response = await fetch(`${baseUrl}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'house', password: '260321' }),
+  });
+  expect(response.status).toBe(200);
+  const payload = await readJson<{ token: string }>(response);
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${payload.token}`,
+  };
+}
+
 describe('ledger API', () => {
   const cleanups: Array<() => Promise<void>> = [];
 
@@ -63,7 +77,12 @@ describe('ledger API', () => {
     const context = await createTestContext();
     cleanups.push(context.cleanup);
 
-    const bootstrapResponse = await fetch(`${context.baseUrl}/api/bootstrap`);
+    const unauthorizedBootstrapResponse = await fetch(`${context.baseUrl}/api/bootstrap`);
+    expect(unauthorizedBootstrapResponse.status).toBe(401);
+
+    const headers = await login(context.baseUrl);
+
+    const bootstrapResponse = await fetch(`${context.baseUrl}/api/bootstrap`, { headers });
     expect(bootstrapResponse.status).toBe(200);
     const bootstrap = await readJson<{ users: Array<{ id: string; name: string }>; expenses: unknown[] }>(bootstrapResponse);
     expect(bootstrap.users).toEqual([
@@ -74,7 +93,7 @@ describe('ledger API', () => {
 
     const renameResponse = await fetch(`${context.baseUrl}/api/users/1`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ name: '阿明' }),
     });
     expect(renameResponse.status).toBe(200);
@@ -82,7 +101,7 @@ describe('ledger API', () => {
 
     const createResponse = await fetch(`${context.baseUrl}/api/expenses`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         description: '买菜',
         amount: 88.5,
@@ -99,7 +118,7 @@ describe('ledger API', () => {
 
     const updateResponse = await fetch(`${context.baseUrl}/api/expenses/${createdExpense.id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         description: '买菜和水果',
         amount: 96,
@@ -114,7 +133,7 @@ describe('ledger API', () => {
       paidBy: '2',
     });
 
-    const listResponse = await fetch(`${context.baseUrl}/api/expenses`);
+    const listResponse = await fetch(`${context.baseUrl}/api/expenses`, { headers });
     expect(listResponse.status).toBe(200);
     expect(await readJson<Array<{ description: string; category: string }>>(listResponse)).toEqual([
       expect.objectContaining({
@@ -125,12 +144,13 @@ describe('ledger API', () => {
 
     const deleteResponse = await fetch(`${context.baseUrl}/api/expenses/${createdExpense.id}`, {
       method: 'DELETE',
+      headers,
     });
     expect(deleteResponse.status).toBe(204);
 
     const recreateResponse = await fetch(`${context.baseUrl}/api/expenses`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         description: '房租',
         amount: 3200,
@@ -144,7 +164,7 @@ describe('ledger API', () => {
 
     const secondExpenseResponse = await fetch(`${context.baseUrl}/api/expenses`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         description: '电费',
         amount: 300,
@@ -157,7 +177,7 @@ describe('ledger API', () => {
 
     const settleResponse = await fetch(`${context.baseUrl}/api/settlements`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ ids: [recreatedExpense.id] }),
     });
     expect(settleResponse.status).toBe(200);
@@ -165,7 +185,7 @@ describe('ledger API', () => {
     expect(settlement.clearedCount).toBe(1);
     expect(settlement.settledAt).not.toBeNull();
 
-    const finalBootstrapResponse = await fetch(`${context.baseUrl}/api/bootstrap`);
+    const finalBootstrapResponse = await fetch(`${context.baseUrl}/api/bootstrap`, { headers });
     const finalBootstrap = await readJson<{
       users: Array<{ id: string; name: string }>;
       expenses: Array<{ description: string; settledAt: string | null }>;
