@@ -1,0 +1,5 @@
+{
+  "name": "Roommate Ledger",
+  "description": "An expense tracking and settlement app for two roommates.",
+  "requestFramePermissions": []
+}
