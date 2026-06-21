@@ -110,6 +110,14 @@ class RateLimiter {
 }
 
 const rateLimiter = new RateLimiter();
+const defaultAllowedOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
+function getAllowedOrigins() {
+  return (process.env.ALLOWED_ORIGINS ?? defaultAllowedOrigins.join(','))
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
 
 function isValidDateString(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value));
@@ -202,14 +210,26 @@ function parseExpenseDraft(payload: unknown): ExpenseDraft {
 export function createApp(store: LedgerStore) {
   const app = express();
   const sessions = new Set<string>();
+  const allowedOrigins = getAllowedOrigins();
 
   // 安全中间件：添加安全响应头
-  app.use((_request, response, next) => {
+  app.use((request, response, next) => {
+    const origin = request.headers.origin;
+    if (origin && (allowedOrigins.includes('*') || allowedOrigins.includes(origin))) {
+      response.setHeader('Access-Control-Allow-Origin', origin);
+      response.setHeader('Vary', 'Origin');
+    }
+    response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('X-Frame-Options', 'DENY');
     response.setHeader('X-XSS-Protection', '1; mode=block');
     response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     next();
+  });
+
+  app.options('*', (_request, response) => {
+    response.status(204).end();
   });
 
   // 增强的速率限制中间件
@@ -252,19 +272,27 @@ export function createApp(store: LedgerStore) {
     response.json({ status: 'ok' });
   });
 
-  app.get('/api/bootstrap', (_request, response) => {
-    const snapshot: AppBootstrap = {
-      users: store.getUsers(),
-      expenses: store.getExpenses(),
-    };
-    response.json(snapshot);
+  app.get('/api/bootstrap', async (_request, response) => {
+    try {
+      const snapshot: AppBootstrap = {
+        users: await store.getUsers(),
+        expenses: await store.getExpenses(),
+      };
+      response.json(snapshot);
+    } catch (error) {
+      response.status(500).json({ message: error instanceof Error ? error.message : '加载数据失败' });
+    }
   });
 
-  app.get('/api/users', (_request, response) => {
-    response.json(store.getUsers());
+  app.get('/api/users', async (_request, response) => {
+    try {
+      response.json(await store.getUsers());
+    } catch (error) {
+      response.status(500).json({ message: error instanceof Error ? error.message : '加载用户失败' });
+    }
   });
 
-  app.put('/api/users/:id', (request, response) => {
+  app.put('/api/users/:id', async (request, response) => {
     try {
       const name = String((request.body as Record<string, unknown>)?.name ?? '').trim();
       if (!name) {
@@ -272,7 +300,7 @@ export function createApp(store: LedgerStore) {
         return;
       }
 
-      const user = store.updateUser(request.params.id, name);
+      const user = await store.updateUser(request.params.id, name);
       if (!user) {
         response.status(404).json({ message: '用户不存在' });
         return;
@@ -284,14 +312,18 @@ export function createApp(store: LedgerStore) {
     }
   });
 
-  app.get('/api/expenses', (_request, response) => {
-    response.json(store.getExpenses());
+  app.get('/api/expenses', async (_request, response) => {
+    try {
+      response.json(await store.getExpenses());
+    } catch (error) {
+      response.status(500).json({ message: error instanceof Error ? error.message : '加载支出失败' });
+    }
   });
 
-  app.post('/api/expenses', (request, response) => {
+  app.post('/api/expenses', async (request, response) => {
     try {
       const expense = parseExpenseDraft(request.body);
-      const createdExpense = store.createExpense({
+      const createdExpense = await store.createExpense({
         ...expense,
         id: crypto.randomUUID(),
         settledAt: null,
@@ -303,10 +335,10 @@ export function createApp(store: LedgerStore) {
     }
   });
 
-  app.put('/api/expenses/:id', (request, response) => {
+  app.put('/api/expenses/:id', async (request, response) => {
     try {
       const expense = parseExpenseDraft(request.body);
-      const updatedExpense = store.updateExpense(request.params.id, expense);
+      const updatedExpense = await store.updateExpense(request.params.id, expense);
       if (!updatedExpense) {
         response.status(404).json({ message: '支出不存在' });
         return;
@@ -318,17 +350,21 @@ export function createApp(store: LedgerStore) {
     }
   });
 
-  app.delete('/api/expenses/:id', (request, response) => {
-    const deleted = store.deleteExpense(request.params.id);
-    if (!deleted) {
-      response.status(404).json({ message: '支出不存在' });
-      return;
-    }
+  app.delete('/api/expenses/:id', async (request, response) => {
+    try {
+      const deleted = await store.deleteExpense(request.params.id);
+      if (!deleted) {
+        response.status(404).json({ message: '支出不存在' });
+        return;
+      }
 
-    response.status(204).end();
+      response.status(204).end();
+    } catch (error) {
+      response.status(400).json({ message: error instanceof Error ? error.message : '删除支出失败' });
+    }
   });
 
-  app.post('/api/settlements', (_request, response) => {
+  app.post('/api/settlements', async (_request, response) => {
     try {
       const body = _request.body as { ids?: unknown } | undefined;
       const ids = Array.isArray(body?.ids)
@@ -354,7 +390,7 @@ export function createApp(store: LedgerStore) {
         }
       }
 
-      response.json(store.settleUp(ids));
+      response.json(await store.settleUp(ids));
     } catch (error) {
       response.status(400).json({
         message: error instanceof Error ? error.message : '结算失败',
@@ -363,7 +399,7 @@ export function createApp(store: LedgerStore) {
   });
 
   // 登录接口
-  app.post('/api/login', (request, response) => {
+  app.post('/api/login', async (request, response) => {
     try {
       const body = request.body as { username?: string; password?: string } | undefined;
       const username = String(body?.username ?? '').trim();
@@ -374,7 +410,7 @@ export function createApp(store: LedgerStore) {
         return;
       }
 
-      const user = store.getUserByUsername(username);
+      const user = await store.getUserByUsername(username);
       if (!user) {
         response.status(401).json({ message: '用户名或密码错误' });
         return;

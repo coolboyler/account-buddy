@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import type { Expense, ExpenseDraft, User } from '../src/types.ts';
 import { CATEGORIES, DEFAULT_USERS } from '../src/types.ts';
+import { createSupabaseLedgerStore, getSupabaseConfigFromEnv } from './supabase-store.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,20 +43,26 @@ export interface AuthUser {
 }
 
 export interface LedgerStore {
-  db: DatabaseSync;
-  getUsers(): User[];
-  getExpenses(): Expense[];
-  createExpense(expense: Expense): Expense;
-  updateExpense(id: string, expense: ExpenseDraft): Expense | null;
-  deleteExpense(id: string): boolean;
-  updateUser(id: string, name: string): User | null;
-  settleUp(ids?: string[]): { clearedCount: number; settledAt: string | null };
-  createUser(username: string, passwordHash: string): AuthUser | null;
-  getUserByUsername(username: string): AuthUser | null;
-  close(): void;
+  db?: DatabaseSync;
+  description: string;
+  getUsers(): User[] | Promise<User[]>;
+  getExpenses(): Expense[] | Promise<Expense[]>;
+  createExpense(expense: Expense): Expense | Promise<Expense>;
+  updateExpense(id: string, expense: ExpenseDraft): Expense | null | Promise<Expense | null>;
+  deleteExpense(id: string): boolean | Promise<boolean>;
+  updateUser(id: string, name: string): User | null | Promise<User | null>;
+  settleUp(ids?: string[]): { clearedCount: number; settledAt: string | null } | Promise<{ clearedCount: number; settledAt: string | null }>;
+  createUser(username: string, passwordHash: string): AuthUser | null | Promise<AuthUser | null>;
+  getUserByUsername(username: string): AuthUser | null | Promise<AuthUser | null>;
+  close(): void | Promise<void>;
 }
 
 export function createLedgerStore(dbPath = defaultDatabasePath): LedgerStore {
+  const supabaseConfig = getSupabaseConfigFromEnv();
+  if (supabaseConfig) {
+    return createSupabaseLedgerStore(supabaseConfig);
+  }
+
   ensureDatabaseDirectory(dbPath);
 
   const db = new DatabaseSync(dbPath);
@@ -142,6 +149,7 @@ export function createLedgerStore(dbPath = defaultDatabasePath): LedgerStore {
 
   return {
     db,
+    description: dbPath,
     getUsers() {
       return getUsersStatement.all().map((row) => mapUser(row as Record<string, unknown>));
     },
