@@ -24,9 +24,44 @@ create table if not exists public.auth_users (
   created_at timestamptz not null default now()
 );
 
--- AccountBuddy keeps its own login/session layer in the Express API.
--- Keep Supabase credentials server-side. If you use only a publishable/anon key,
--- the backend needs table access through the public schema.
-alter table public.users disable row level security;
-alter table public.expenses disable row level security;
-alter table public.auth_users disable row level security;
+alter table public.users enable row level security;
+alter table public.expenses enable row level security;
+alter table public.auth_users enable row level security;
+
+drop policy if exists "accountbuddy users read" on public.users;
+drop policy if exists "accountbuddy users write" on public.users;
+drop policy if exists "accountbuddy expenses read" on public.expenses;
+drop policy if exists "accountbuddy expenses write" on public.expenses;
+drop policy if exists "accountbuddy auth users locked" on public.auth_users;
+
+create policy "accountbuddy users read"
+  on public.users
+  for select
+  to authenticated
+  using (true);
+
+create policy "accountbuddy users write"
+  on public.users
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "accountbuddy expenses read"
+  on public.expenses
+  for select
+  to authenticated
+  using (true);
+
+create policy "accountbuddy expenses write"
+  on public.expenses
+  for all
+  to authenticated
+  using (true)
+  with check (true);
+
+create policy "accountbuddy auth users locked"
+  on public.auth_users
+  for select
+  to service_role
+  using (true);

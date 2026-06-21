@@ -2,20 +2,36 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { setApiAuthToken } from './lib/api';
 import type { Expense, User } from './types';
 
-function jsonResponse(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
+const apiMocks = vi.hoisted(() => ({
+  getCurrentSession: vi.fn(),
+  login: vi.fn(),
+  logout: vi.fn(),
+  getBootstrap: vi.fn(),
+  createExpense: vi.fn(),
+  updateExpense: vi.fn(),
+  deleteExpense: vi.fn(),
+  updateUser: vi.fn(),
+  settleUp: vi.fn(),
+}));
+
+vi.mock('./lib/api', () => ({
+  ApiError: class ApiError extends Error {
+    status: number;
+
+    constructor(message: string, status = 500) {
+      super(message);
+      this.name = 'ApiError';
+      this.status = status;
+    }
+  },
+  ...apiMocks,
+}));
 
 describe('App', () => {
   let users: User[];
   let expenses: Expense[];
-  let fetchSpy: ReturnType<typeof vi.fn>;
   let currentDate: string;
 
   beforeEach(() => {
@@ -35,103 +51,57 @@ describe('App', () => {
         settledAt: null,
       },
     ];
-    localStorage.clear();
-    setApiAuthToken(null);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-    fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = (init?.method ?? 'GET').toUpperCase();
-      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
-
-      if (url.endsWith('/api/login') && method === 'POST') {
-        if (body?.username === 'house' && body?.password === '260321') {
-          return jsonResponse({ token: 'test-token', user: { id: 'admin', username: 'house' } });
-        }
-
-        return jsonResponse({ message: '用户名或密码错误' }, 401);
-      }
-
-      const headers = init?.headers as Record<string, string> | undefined;
-      const hasAuthHeader = Boolean(headers && Object.entries(headers).some(([key, value]) => (
-        key.toLowerCase() === 'authorization' && value === 'Bearer test-token'
-      )));
-      if (!hasAuthHeader) {
-        return jsonResponse({ message: '登录已过期，请重新登录' }, 401);
-      }
-
-      if (url.endsWith('/api/bootstrap') && method === 'GET') {
-        return jsonResponse({ users, expenses });
-      }
-
-      if (url.endsWith('/api/expenses') && method === 'POST' && body) {
-        const createdExpense: Expense = {
-          id: `expense-${expenses.length + 1}`,
-          description: String(body.description),
-          amount: Number(body.amount),
-          paidBy: String(body.paidBy),
-          date: String(body.date),
-          category: body.category as Expense['category'],
-          settledAt: null,
-        };
-        expenses = [createdExpense, ...expenses];
-        return jsonResponse(createdExpense, 201);
-      }
-
-      if (url.includes('/api/expenses/') && method === 'PUT' && body) {
-        const expenseId = url.split('/').pop() ?? '';
-        const currentExpense = expenses.find((expense) => expense.id === expenseId);
-        const nextExpense: Expense = {
-          id: expenseId,
-          description: String(body.description),
-          amount: Number(body.amount),
-          paidBy: String(body.paidBy),
-          date: String(body.date),
-          category: body.category as Expense['category'],
-          settledAt: currentExpense?.settledAt ?? null,
-        };
-        expenses = expenses.map((expense) => (expense.id === expenseId ? nextExpense : expense));
-        return jsonResponse(nextExpense);
-      }
-
-      if (url.includes('/api/expenses/') && method === 'DELETE') {
-        const expenseId = url.split('/').pop() ?? '';
-        expenses = expenses.filter((expense) => expense.id !== expenseId);
-        return new Response(null, { status: 204 });
-      }
-
-      if (url.includes('/api/users/') && method === 'PUT' && body) {
-        const userId = url.split('/').pop() ?? '';
-        const nextUser = { id: userId, name: String(body.name) };
-        users = users.map((user) => (user.id === userId ? nextUser : user));
-        return jsonResponse(nextUser);
-      }
-
-      if (url.endsWith('/api/settlements') && method === 'POST') {
-        const ids = Array.isArray(body?.ids) ? body.ids.map(String) : [];
-        const settledAt = '2026-03-31T10:00:00.000Z';
-        const targetIds = ids.length > 0
-          ? ids
-          : expenses.filter((expense) => !expense.settledAt).map((expense) => expense.id);
-        const clearedCount = expenses.filter((expense) => !expense.settledAt && targetIds.includes(expense.id)).length;
-        expenses = expenses.map((expense) => (
-          expense.settledAt || !targetIds.includes(expense.id) ? expense : { ...expense, settledAt }
-        ));
-        return jsonResponse({ clearedCount, settledAt });
-      }
-
-      return jsonResponse({ message: 'Unhandled request' }, 500);
+    apiMocks.getCurrentSession.mockResolvedValue(null);
+    apiMocks.login.mockResolvedValue({ token: 'test-token', user: { id: 'admin', username: 'house' } });
+    apiMocks.logout.mockResolvedValue(undefined);
+    apiMocks.getBootstrap.mockImplementation(async () => ({ users, expenses }));
+    apiMocks.createExpense.mockImplementation(async (draft: Omit<Expense, 'id' | 'settledAt'>) => {
+      const createdExpense: Expense = {
+        ...draft,
+        id: `expense-${expenses.length + 1}`,
+        settledAt: null,
+      };
+      expenses = [createdExpense, ...expenses];
+      return createdExpense;
     });
-
-    vi.stubGlobal('fetch', fetchSpy);
+    apiMocks.updateExpense.mockImplementation(async (expense: Expense) => {
+      const currentExpense = expenses.find((item) => item.id === expense.id);
+      const nextExpense = {
+        ...expense,
+        settledAt: currentExpense?.settledAt ?? null,
+      };
+      expenses = expenses.map((item) => (item.id === expense.id ? nextExpense : item));
+      return nextExpense;
+    });
+    apiMocks.deleteExpense.mockImplementation(async (id: string) => {
+      expenses = expenses.filter((expense) => expense.id !== id);
+    });
+    apiMocks.updateUser.mockImplementation(async (id: string, name: string) => {
+      const nextUser = { id, name };
+      users = users.map((user) => (user.id === id ? nextUser : user));
+      return nextUser;
+    });
+    apiMocks.settleUp.mockImplementation(async (ids?: string[]) => {
+      const settledAt = '2026-03-31T10:00:00.000Z';
+      const targetIds = ids && ids.length > 0
+        ? ids
+        : expenses.filter((expense) => !expense.settledAt).map((expense) => expense.id);
+      const clearedCount = expenses.filter((expense) => !expense.settledAt && targetIds.includes(expense.id)).length;
+      expenses = expenses.map((expense) => (
+        expense.settledAt || !targetIds.includes(expense.id) ? expense : { ...expense, settledAt }
+      ));
+      return { clearedCount, settledAt };
+    });
   });
 
   afterEach(() => {
     cleanup();
-    localStorage.clear();
-    setApiAuthToken(null);
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    for (const mock of Object.values(apiMocks)) {
+      mock.mockReset();
+    }
   });
 
   async function login(user: ReturnType<typeof userEvent.setup>) {
@@ -146,7 +116,8 @@ describe('App', () => {
     await login(user);
 
     await screen.findByText('买菜');
-    expect(fetchSpy).toHaveBeenCalledWith('/api/bootstrap', expect.any(Object));
+    expect(apiMocks.login).toHaveBeenCalledWith('house', '260321');
+    expect(apiMocks.getBootstrap).toHaveBeenCalledOnce();
     expect(screen.queryByLabelText('导出账单')).toBeNull();
     expect(screen.getByText(/当前默认按两人 50\/50 平摊/)).not.toBeNull();
     expect(screen.getAllByText('人均 ¥22.50').length).toBeGreaterThan(0);
@@ -166,12 +137,7 @@ describe('App', () => {
     await user.type(descriptionInput, '电费已修改');
     await user.click(screen.getByRole('button', { name: '保存' }));
     await waitFor(() => {
-      const updateCall = fetchSpy.mock.calls.find(
-        ([url, init]) => url === '/api/expenses/expense-2' && init?.method === 'PUT',
-      );
-      expect(updateCall).toBeTruthy();
-      const requestInit = updateCall?.[1] as RequestInit;
-      expect(JSON.parse(String(requestInit.body))).toEqual({
+      expect(apiMocks.updateExpense).toHaveBeenCalledWith({
         id: 'expense-2',
         description: '电费已修改',
         amount: 88,
@@ -203,14 +169,7 @@ describe('App', () => {
     expect(screen.getAllByText('人均 ¥44.00').length).toBeGreaterThan(0);
     expect(screen.getAllByText('未结算笔数').length).toBeGreaterThan(0);
 
-    await waitFor(() => {
-      const settlementCall = fetchSpy.mock.calls.find(
-        ([url, init]) => url === '/api/settlements' && init?.method === 'POST',
-      );
-      expect(settlementCall).toBeTruthy();
-      const requestInit = settlementCall?.[1] as RequestInit;
-      expect(JSON.parse(String(requestInit.body))).toEqual({ ids: ['expense-2'] });
-    });
+    expect(apiMocks.settleUp).toHaveBeenCalledWith(['expense-2']);
   });
 
   it('prevents accidental duplicate additions unless explicitly confirmed', async () => {
@@ -236,10 +195,7 @@ describe('App', () => {
     await user.click(submitButton);
 
     await waitFor(() => {
-      const createCalls = fetchSpy.mock.calls.filter(
-        ([url, init]) => url === '/api/expenses' && init?.method === 'POST',
-      );
-      expect(createCalls).toHaveLength(1);
+      expect(apiMocks.createExpense).toHaveBeenCalledOnce();
     });
   });
 });

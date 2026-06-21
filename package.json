@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n api,web -c green,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev": "npm run dev:web",
+    "dev:full": "concurrently -k -n api,web -c green,cyan \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch server/index.ts",
     "dev:web": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
@@ -12,6 +13,7 @@
     "start": "NODE_ENV=production tsx server/index.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "create:supabase-auth-user": "tsx scripts/create-supabase-auth-user.ts",
     "migrate:supabase": "tsx scripts/migrate-sqlite-to-supabase.ts",
     "test": "vitest run",
     "test:watch": "vitest"

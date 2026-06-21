@@ -11,10 +11,8 @@ import { MonthSelector } from './components/MonthSelector';
 import { ExpenseModal } from './components/ExpenseModal';
 import { HistoryList } from './components/HistoryList';
 import { LoginPage } from './components/LoginPage';
-import { ApiError, createExpense, deleteExpense, getBootstrap, setApiAuthToken, settleUp, updateExpense, updateUser } from './lib/api';
+import { ApiError, createExpense, deleteExpense, getBootstrap, getCurrentSession, logout, settleUp, updateExpense, updateUser } from './lib/api';
 import { compareExpenseDates } from './lib/date';
-
-const STORAGE_KEY = 'accountbuddy_token';
 
 interface SettlementRequest {
   ids: string[];
@@ -40,28 +38,43 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // 检查本地存储的 token
+  // 检查 Supabase 本地会话
   useEffect(() => {
-    const storedToken = localStorage.getItem(STORAGE_KEY);
-    if (storedToken) {
-      setApiAuthToken(storedToken);
-      setAuthToken(storedToken);
-      setIsAuthenticated(true);
+    let active = true;
+
+    async function restoreSession() {
+      try {
+        const session = await getCurrentSession();
+        if (!active || !session) {
+          return;
+        }
+
+        setAuthToken(session.access_token);
+        setIsAuthenticated(true);
+      } catch {
+        if (active) {
+          setAuthToken(null);
+          setIsAuthenticated(false);
+        }
+      }
     }
+
+    void restoreSession();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  // 登录成功后保存 token
+  // 登录成功后使用 Supabase session token
   const handleLoginSuccess = (token: string) => {
-    localStorage.setItem(STORAGE_KEY, token);
-    setApiAuthToken(token);
     setAuthToken(token);
     setIsAuthenticated(true);
   };
 
   // 登出
-  const handleLogout = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    setApiAuthToken(null);
+  const handleLogout = async () => {
+    await logout();
     setAuthToken(null);
     setIsAuthenticated(false);
     setExpenses([]);
