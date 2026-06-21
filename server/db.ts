@@ -18,13 +18,22 @@ function ensureDatabaseDirectory(dbPath: string) {
 }
 
 function mapExpense(row: Record<string, unknown>): Expense {
+  const rawCategory = String(row.category);
+  const category = CATEGORIES.includes(rawCategory as Expense['category'])
+    ? rawCategory as Expense['category']
+    : rawCategory === '日用品'
+      ? '购物'
+      : rawCategory === '房租'
+        ? '居住'
+        : '其他';
+
   return {
     id: String(row.id),
     description: String(row.description),
     amount: Number(row.amount),
     paidBy: String(row.paid_by),
     date: String(row.date),
-    category: String(row.category) as Expense['category'],
+    category,
     settledAt: row.settled_at ? String(row.settled_at) : null,
   };
 }

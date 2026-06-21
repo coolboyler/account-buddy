@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createClient } from '@supabase/supabase-js';
 import { getSupabaseConfigFromEnv } from '../server/supabase-store.ts';
+import { CATEGORIES, type Category } from '../src/types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,13 +38,33 @@ async function upsertTable<T extends Record<string, unknown>>(tableName: string,
   console.log(`${tableName}: ${rows.length} rows`);
 }
 
+function normalizeCategory(value: unknown): Category {
+  const category = String(value);
+  if (CATEGORIES.includes(category as Category)) {
+    return category as Category;
+  }
+
+  if (category === '日用品') {
+    return '购物';
+  }
+
+  if (category === '房租') {
+    return '居住';
+  }
+
+  return '其他';
+}
+
 const users = sqlite.prepare('SELECT id, name FROM users ORDER BY id ASC').all() as Array<Record<string, unknown>>;
 const authUsers = sqlite.prepare('SELECT id, username, password_hash FROM auth_users ORDER BY id ASC').all() as Array<Record<string, unknown>>;
-const expenses = sqlite.prepare(`
+const expenses = (sqlite.prepare(`
   SELECT id, description, amount, paid_by, date, category, settled_at
   FROM expenses
   ORDER BY rowid ASC
-`).all() as Array<Record<string, unknown>>;
+`).all() as Array<Record<string, unknown>>).map((expense) => ({
+  ...expense,
+  category: normalizeCategory(expense.category),
+}));
 
 await upsertTable('users', users);
 await upsertTable('auth_users', authUsers);

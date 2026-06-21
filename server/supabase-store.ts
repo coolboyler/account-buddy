@@ -31,13 +31,21 @@ interface AuthUserRow {
 }
 
 function mapExpense(row: ExpenseRow): Expense {
+  const category = CATEGORIES.includes(row.category as Expense['category'])
+    ? row.category as Expense['category']
+    : row.category === '日用品'
+      ? '购物'
+      : row.category === '房租'
+        ? '居住'
+        : '其他';
+
   return {
     id: row.id,
     description: row.description,
     amount: Number(row.amount),
     paidBy: row.paid_by,
     date: row.date,
-    category: row.category as Expense['category'],
+    category,
     settledAt: row.settled_at,
   };
 }
